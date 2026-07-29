@@ -24,7 +24,7 @@ To work with the Python source code instead, either download the ZIP file with t
 
 ## Citation
 
-A wide range of publications is available to refer to AquaCrop in the GUI or standalone version. The most recent report, "[AquaCrop on the ground. Model applications for sustainable agricultural water management](https://openknowledge.fao.org/items/5ac8b52d-dff2-413e-9068-e3f7163d88bf)", is available at the following link: <https://doi.org/10.4060/cd4207en>
+A wide range of publications is available to refer to AquaCrop in the GUI or standalone version. The most recent report is "[AquaCrop on the ground. Model applications for sustainable agricultural water management](https://openknowledge.fao.org/items/5ac8b52d-dff2-413e-9068-e3f7163d88bf)".
 
 The users can refer to this publication or any publication of their choice, when using these AquaCrop assets.
 
