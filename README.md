@@ -16,13 +16,11 @@ The following applications are publicly distributed:
 
 Online documentation and contact information are available at the [FAO website](https://www.fao.org/aquacrop/en/).
 
-## Running the executable
+## Running Aquacrop
 
 Download the ZIP file with the AquaCrop executable (v7.3) for Windows, Linux or macOS from the [Releases](https://github.com/un-fao/fao-AquaCrop/releases/tag/v7.3) page. Consult the reference manual ([FAO website](https://www.fao.org/aquacrop/en/)) for details about the AquaCrop stand-alone program.
 
-## Python source code
-
-AquaCrop v7.3 requires Python 3.10 or later. Either download the ZIP file with the source code from the release page, or fork the repository and clone your fork locally if you wish to contribute.
+To work with the Python source code instead, either download the ZIP file with the source code from the [Releases](https://github.com/un-fao/fao-AquaCrop/releases/tag/v7.3) page, or fork the repository and clone your fork locally if you wish to contribute.
 
 ## Citation
 
