@@ -40,7 +40,7 @@ The users can refer to this publication or any publication of their choice, when
 **Contributing authors:**
 
 - Maher Salman (FAO)
-- Margarita Garcia-Vila (University of Cordoba)
+- Margarita Garcia-Vila (IAS-CSIC, Spain)
 - Lee Heng (former IAEA)
 - Hanne Van Gaelen (KU Leuven, Belgium)
 - Eline Vanuytrecht (KU Leuven, Belgium)
