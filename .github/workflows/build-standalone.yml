@@ -1,0 +1,129 @@
+name: Build standalone executables
+
+# Freezes the Python source into a standalone executable for each target OS.
+#
+# - push / pull request : build + smoke test, archives kept as workflow artifacts
+# - tag  v*             : the same archives are attached to a GitHub release
+#
+# PyInstaller does not cross-compile: every target needs a runner of that OS,
+# which is what the matrix below provides.
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_DIR: python_source_code/AquaCrop73_src
+  PYTHON_VERSION: '3.13'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04     # oldest supported glibc: binaries stay usable on older distros
+            label: x86_64-linux
+            bin: aquacrop
+          - os: macos-13
+            label: x86_64-macos
+            bin: aquacrop
+          - os: macos-14
+            label: arm64-macos
+            bin: aquacrop
+          - os: windows-2022
+            label: x86_64-windows
+            bin: aquacrop.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.PROJECT_DIR }}/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: pyinstaller --clean --noconfirm aquacrop.spec
+
+      # The executable resolves LIST/, OUTP/, PARAM/ and SIMUL/ next to itself,
+      # so the archive ships them alongside the binary.
+      - name: Stage the distribution
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          STAGE="staging/AquaCrop73_${{ matrix.label }}"
+          mkdir -p "$STAGE"
+          cp "dist/${{ matrix.bin }}" "$STAGE/"
+          cp src/COPYRIGHT "$STAGE/"
+          cp -R testcase/LIST testcase/SIMUL "$STAGE/"
+          mkdir -p "$STAGE/OUTP" "$STAGE/PARAM"
+
+      # Runs the frozen binary from an unrelated working directory: this is what
+      # catches a regression to CWD-relative path resolution.
+      - name: Smoke test
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          STAGE="$PWD/staging/AquaCrop73_${{ matrix.label }}"
+          cd "$HOME"
+          "$STAGE/${{ matrix.bin }}"
+          test -f "$STAGE/OUTP/AllDone.OUT" || { echo "::error::no OUTP/AllDone.OUT produced"; exit 1; }
+          echo "smoke test OK: $(cat "$STAGE/OUTP/AllDone.OUT")"
+          rm -f "$STAGE/OUTP/"*.OUT
+
+      - name: Create the archive
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          python -c "import shutil; shutil.make_archive('aquacrop-7.3-${{ matrix.label }}', 'zip', 'staging')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aquacrop-7.3-${{ matrix.label }}
+          path: ${{ env.PROJECT_DIR }}/aquacrop-7.3-${{ matrix.label }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Attach archives to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          draft: true
+          generate_release_notes: true
