@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+*.codexbak
 
 # PyInstaller build output. Patterns are unanchored: they match at any depth,
 # e.g. python_source_code/AquaCrop73_src/{build,dist}/.

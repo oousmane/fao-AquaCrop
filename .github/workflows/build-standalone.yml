@@ -1,19 +1,28 @@
 name: Build standalone executables
 
-# Freezes the Python source into a standalone executable for each target OS.
+# Build the AquaCrop Python standalone executable for each supported OS.
 #
-# - push / pull request : build + smoke test, archives kept as workflow artifacts
-# - tag  v*             : the same archives are attached to a GitHub release
+# - Push or pull request: build, run the relocation smoke test, and retain
+#   the archives as workflow artifacts.
+# - Version tag (v*): perform the same checks and attach the archives to a
+#   draft GitHub release.
 #
-# PyInstaller does not cross-compile: every target needs a runner of that OS,
-# which is what the matrix below provides.
+# PyInstaller does not cross-compile, so each target must be built on a
+# runner using the corresponding operating system and architecture.
 
 on:
   push:
-    branches: [main, dev]
-    tags: ['v*']
+    branches:
+      - main
+      - dev
+    tags:
+      - "v*"
+
   pull_request:
-    branches: [main, dev]
+    branches:
+      - main
+      - dev
+
   workflow_dispatch:
 
 permissions:
@@ -21,7 +30,8 @@ permissions:
 
 env:
   PROJECT_DIR: python_source_code/AquaCrop73_src
-  PYTHON_VERSION: '3.13'
+  PYTHON_VERSION: "3.13"
+  PYINSTALLER_VERSION: "6.22.2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,29 +39,37 @@ concurrency:
 
 jobs:
   build:
-    name: ${{ matrix.label }}
+    name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04     # oldest supported glibc: binaries stay usable on older distros
+          # Building on Ubuntu 22.04 keeps the required glibc version low
+          # enough for the executable to run on a wider range of systems.
+          - os: ubuntu-22.04
             label: x86_64-linux
-            bin: aquacrop
+            executable: aquacrop
+
           - os: macos-13
             label: x86_64-macos
-            bin: aquacrop
+            executable: aquacrop
+
           - os: macos-14
             label: arm64-macos
-            bin: aquacrop
+            executable: aquacrop
+
           - os: windows-2022
             label: x86_64-windows
-            bin: aquacrop.exe
+            executable: aquacrop.exe
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the repository
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -59,70 +77,227 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install "pyinstaller==${PYINSTALLER_VERSION}"
 
       - name: Build with PyInstaller
         working-directory: ${{ env.PROJECT_DIR }}
-        run: pyinstaller --clean --noconfirm aquacrop.spec
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m PyInstaller --clean --noconfirm aquacrop.spec
 
-      # The executable resolves LIST/, OUTP/, PARAM/ and SIMUL/ next to itself,
-      # so the archive ships them alongside the binary.
+      # The frozen executable resolves its runtime directories relative to its
+      # own location. The bundled Ottawa.PRM project additionally references
+      # './DATA/' and './OBS/', which are resolved the same way, so those two
+      # directories are part of the required layout, not optional extras.
       - name: Stage the distribution
-        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
+
           STAGE="staging/AquaCrop73_${{ matrix.label }}"
+
           mkdir -p "$STAGE"
-          cp "dist/${{ matrix.bin }}" "$STAGE/"
-          cp src/COPYRIGHT "$STAGE/"
-          cp -R testcase/LIST testcase/SIMUL "$STAGE/"
-          mkdir -p "$STAGE/OUTP" "$STAGE/PARAM"
+          mkdir -p "$STAGE/OUTP"
 
-      # Runs the frozen binary from an unrelated working directory: this is what
-      # catches a regression to CWD-relative path resolution.
-      - name: Smoke test
-        shell: bash
+          cp "dist/${{ matrix.executable }}" "$STAGE/"
+          cp "src/COPYRIGHT" "$STAGE/"
+
+          # OUTP_REF is reference output used for verification only; it is
+          # deliberately not shipped.
+          for directory in LIST SIMUL PARAM DATA OBS; do
+            if [ -d "testcase/$directory" ]; then
+              cp -R "testcase/$directory" "$STAGE/"
+            else
+              mkdir -p "$STAGE/$directory"
+            fi
+          done
+
+          find "$STAGE" -name ".gitkeep" -delete
+          find "$STAGE" -name ".DS_Store" -delete
+
+          # Preserve executable permissions on Unix runners.
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x "$STAGE/${{ matrix.executable }}"
+          fi
+
+      # Run the executable from an unrelated working directory. This catches
+      # any regression that makes runtime paths depend on the caller's CWD.
+      #
+      # This is a relocation/startup test. It only becomes a complete
+      # simulation test when testcase/LIST contains a runnable .PRM project
+      # and all files referenced by that project are available.
+      - name: Run relocation smoke test
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
-          set -euo pipefail
+          set -u
+
           STAGE="$PWD/staging/AquaCrop73_${{ matrix.label }}"
-          cd "$HOME"
-          "$STAGE/${{ matrix.bin }}"
-          test -f "$STAGE/OUTP/AllDone.OUT" || { echo "::error::no OUTP/AllDone.OUT produced"; exit 1; }
-          echo "smoke test OK: $(cat "$STAGE/OUTP/AllDone.OUT")"
-          rm -f "$STAGE/OUTP/"*.OUT
+          EXECUTABLE="$STAGE/${{ matrix.executable }}"
+          STDOUT_LOG="$STAGE/OUTP/stdout.log"
+          STDERR_LOG="$STAGE/OUTP/stderr.log"
 
-      - name: Create the archive
-        shell: bash
+          echo "::group::Staged distribution"
+          ls -laR "$STAGE"
+          echo "::endgroup::"
+
+          # AquaCrop must locate its runtime directories from the executable,
+          # even though the process is launched from somewhere unrelated.
+          cd "$HOME"
+
+          echo "Executable: $EXECUTABLE"
+          echo "Working directory: $PWD"
+
+          # GitHub Actions invokes Bash with error checking enabled. Temporarily
+          # disable it so that the exit code and logs can still be inspected
+          # when the executable fails.
+          set +e
+          "$EXECUTABLE" >"$STDOUT_LOG" 2>"$STDERR_LOG"
+          rc=$?
+          set -e
+
+          echo "Exit code: $rc"
+
+          echo "::group::Standard output"
+          if [ -s "$STDOUT_LOG" ]; then
+            cat "$STDOUT_LOG"
+          else
+            echo "(empty)"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Standard error"
+          if [ -s "$STDERR_LOG" ]; then
+            cat "$STDERR_LOG"
+          else
+            echo "(empty)"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::OUTP after execution"
+          ls -la "$STAGE/OUTP" || true
+
+          for file in "$STAGE/OUTP/"*.OUT; do
+            [ -e "$file" ] || continue
+            echo "--- $(basename "$file") ---"
+            cat "$file"
+          done
+          echo "::endgroup::"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::The executable exited with code $rc."
+            exit 1
+          fi
+
+          if [ ! -f "$STAGE/OUTP/AllDone.OUT" ]; then
+            echo "::error::The executable did not produce OUTP/AllDone.OUT."
+            exit 1
+          fi
+
+          echo "Relocation smoke test passed."
+
+      # If the repository contains a real reference project, strengthen the
+      # smoke test by requiring at least one seasonal simulation result.
+      #
+      # AquaCrop names this file <project>PRMseason.OUT, in lower case. The
+      # glob below is case-sensitive under Bash on every runner, so the case
+      # must match exactly.
+      - name: Verify reference simulation output
         working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
         run: |
           set -euo pipefail
-          python -c "import shutil; shutil.make_archive('aquacrop-7.3-${{ matrix.label }}', 'zip', 'staging')"
 
-      - uses: actions/upload-artifact@v4
+          STAGE="$PWD/staging/AquaCrop73_${{ matrix.label }}"
+
+          if compgen -G "testcase/LIST/*.PRM" > /dev/null; then
+            if ! compgen -G "$STAGE/OUTP/"*season.OUT > /dev/null; then
+              echo "::error::A reference .PRM project was supplied, but no *season.OUT file was produced."
+              exit 1
+            fi
+
+            echo "Reference simulation produced at least one *season.OUT file."
+          else
+            echo "No reference .PRM project is stored in testcase/LIST."
+            echo "Only executable startup and CWD-independent path resolution were tested."
+          fi
+
+      # Remove transient logs and outputs before creating the public archive.
+      # OUTP itself is retained because it is a mandatory runtime directory.
+      - name: Clean staged outputs
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STAGE="staging/AquaCrop73_${{ matrix.label }}"
+
+          find "$STAGE/OUTP" \
+            -maxdepth 1 \
+            -type f \
+            \( -name "*.OUT" -o -name "*.log" \) \
+            -delete
+
+      - name: Create distribution archive
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -c "import shutil; shutil.make_archive(
+              'aquacrop-7.3-${{ matrix.label }}',
+              'zip',
+              root_dir='staging',
+              base_dir='AquaCrop73_${{ matrix.label }}'
+          )"
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v4
         with:
           name: aquacrop-7.3-${{ matrix.label }}
           path: ${{ env.PROJECT_DIR }}/aquacrop-7.3-${{ matrix.label }}.zip
           if-no-files-found: error
           retention-days: 30
 
+      # Preserve diagnostic information when a build or test fails.
+      - name: Upload smoke-test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs-${{ matrix.label }}
+          path: |
+            ${{ env.PROJECT_DIR }}/staging/AquaCrop73_${{ matrix.label }}/OUTP/
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     name: Attach archives to the release
     needs: build
+
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: aquacrop-7.3-*
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*.zip
           draft: true
