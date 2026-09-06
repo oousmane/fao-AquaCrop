@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller build output. Patterns are unanchored: they match at any depth,
+# e.g. python_source_code/AquaCrop73_src/{build,dist}/.
+# The .spec file is the build recipe and stays tracked.
+build/
+dist/
+
+# Backups left by editors and AI tools
+*.codexbak
+*.bak
+*.orig
+*.rej
+
+# AquaCrop run output — regenerated at every run.
+# Leading **/ is required: testcase/ is nested under python_source_code/,
+# so a root-anchored "testcase/OUTP/..." would never match.
+# To version a reference run for regression testing, force-add it:
+#   git add -f python_source_code/AquaCrop73_src/testcase/OUTP/PROJECT.OUT
+**/testcase/OUTP/*.OUT
+
+# Released binaries in standalone/ and gui/ are deliverables: do NOT add *.zip here.
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp

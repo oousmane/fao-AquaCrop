@@ -22,6 +22,35 @@ Download the ZIP file with the AquaCrop standalone executable (v7.3) for Windows
 
 To work with the Python source code instead, either download the ZIP file with the source code from the [Releases](https://github.com/un-fao/fao-AquaCrop/releases/tag/v7.3) page, or fork the repository and clone your fork locally if you wish to contribute.
 
+## Building a standalone executable
+
+The Python source can be frozen into a single-file executable with [PyInstaller](https://pyinstaller.org/), so that AquaCrop runs on machines without a Python installation. A build recipe is provided in `python_source_code/AquaCrop73_src/aquacrop.spec`.
+
+```bash
+pip install pyinstaller
+cd python_source_code/AquaCrop73_src
+pyinstaller --clean --noconfirm aquacrop.spec
+```
+
+The executable is written to `dist/aquacrop` (`dist\aquacrop.exe` on Windows). It is built per platform: run the command on the operating system you are targeting, since PyInstaller does not cross-compile.
+
+At run time, AquaCrop resolves its data directories **next to the executable**, not against the current working directory, so the program can be launched from anywhere. Place the four data directories alongside it:
+
+```
+aquacrop            <- the executable
+LIST/               <- ListProjects.txt and project files
+PARAM/              <- crop, soil and climate parameter files
+SIMUL/              <- simulation settings, MaunaLoa.CO2
+OUTP/               <- created outputs are written here (must exist)
+```
+
+To run from the source tree instead, the same directories are read from `python_source_code/AquaCrop73_src/testcase/`:
+
+```bash
+cd python_source_code/AquaCrop73_src
+python3 src/aquacrop.py
+```
+
 ## Citation
 
 A wide range of publications is available to refer to AquaCrop in the GUI or standalone version. The most recent report is "[AquaCrop on the ground. Model applications for sustainable agricultural water management](https://openknowledge.fao.org/items/5ac8b52d-dff2-413e-9068-e3f7163d88bf)".
